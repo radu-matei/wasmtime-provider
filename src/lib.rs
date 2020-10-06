@@ -1,15 +1,13 @@
 use wapc::{WebAssemblyEngineProvider, WapcFunctions, ModuleState, HOST_NAMESPACE, WasiParams};
 use std::error::Error;
-use std::rc::Rc;
 use wasmtime::{Instance, Engine, Store, Module, Func, Extern, ExternType};
-use std::cell::RefCell;
 
 // namespace needed for some language support
 const WASI_UNSTABLE_NAMESPACE: &str = "wasi_unstable";
 const WASI_SNAPSHOT_PREVIEW1_NAMESPACE: &str = "wasi_snapshot_preview1";
 
 use crate::modreg::ModuleRegistry;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 
 #[macro_use]
@@ -34,7 +32,7 @@ macro_rules! call {
 }
 
 struct EngineInner {
-    instance: Rc<RefCell<Option<Instance>>>,
+    instance: Arc<RwLock<Instance>>,
     guest_call_fn: Func,
     host: Arc<ModuleState>,
 }
@@ -59,9 +57,8 @@ impl WasmtimeEngineProvider {
 
 impl WebAssemblyEngineProvider for WasmtimeEngineProvider {
     fn init(&mut self, host: Arc<ModuleState>) -> Result<(), Box<dyn Error>> {
-        let instance_ref = Rc::new(RefCell::new(None));
         let instance = instance_from_buffer(&self.modbytes, &self.wasidata, host.clone())?;
-        instance_ref.replace(Some(instance));
+        let instance_ref = Arc::new(RwLock::new(instance));
         let gc = guest_call_fn(instance_ref.clone())?;
         self.inner = Some(EngineInner {
             instance: instance_ref,
@@ -94,7 +91,7 @@ impl WebAssemblyEngineProvider for WasmtimeEngineProvider {
 
         let new_instance = instance_from_buffer(module, &self.wasidata,
                                                 self.inner.as_ref().unwrap().host.clone())?;
-        self.inner.as_ref().unwrap().instance.borrow_mut().replace(new_instance);
+        *self.inner.as_ref().unwrap().instance.write().unwrap() = new_instance;
 
         self.initialize()
     }
@@ -102,17 +99,17 @@ impl WebAssemblyEngineProvider for WasmtimeEngineProvider {
 
 impl WasmtimeEngineProvider {
     fn initialize(&self) -> Result<(), Box<dyn Error>> {
-        if let Some(ext) = self
-            .inner.as_ref().unwrap()
-            .instance
-            .borrow()
-            .as_ref()
-            .unwrap()
-            .get_export("_start")
-        {
-            ext.into_func()
-                .unwrap()
-                .call(&[])?;
+        for starter in wapc::WapcFunctions::REQUIRED_STARTS.iter() {
+            if let Some(ext) = self
+                .inner.as_ref().unwrap()
+                .instance
+                .read().unwrap()
+                .get_export(starter)
+            {
+                ext.into_func()
+                    .unwrap()
+                    .call(&[])?;
+            }
         }
         Ok(())
     }
@@ -214,8 +211,8 @@ fn callback_for_import(import: &str, host: Arc<ModuleState>, store: Store) -> Ex
 
 // Called once, then the result is cached. This returns a `Func` that corresponds
 // to the `__guest_call` export
-fn guest_call_fn(instance: Rc<RefCell<Option<Instance>>>) -> Result<Func, Box<dyn Error>> {
-    if let Some(func) = instance.borrow().as_ref().unwrap().get_func(WapcFunctions::GUEST_CALL) {
+fn guest_call_fn(instance: Arc<RwLock<Instance>>) -> Result<Func, Box<dyn Error>> {
+    if let Some(func) = instance.read().unwrap().get_func(WapcFunctions::GUEST_CALL) {
         Ok(func)
     } else {
         Err("Guest module did not export __guest_call function!".into())
