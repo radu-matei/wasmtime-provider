@@ -1,6 +1,6 @@
-use wapc::{WebAssemblyEngineProvider, WapcFunctions, ModuleState, HOST_NAMESPACE, WasiParams};
 use std::error::Error;
-use wasmtime::{Instance, Engine, Store, Module, Func, Extern, ExternType};
+use wapc::{ModuleState, WapcFunctions, WasiParams, WebAssemblyEngineProvider, HOST_NAMESPACE};
+use wasmtime::{Engine, Extern, ExternType, Func, Instance, Module, Store};
 
 // namespace needed for some language support
 const WASI_UNSTABLE_NAMESPACE: &str = "wasi_unstable";
@@ -9,12 +9,11 @@ const WASI_SNAPSHOT_PREVIEW1_NAMESPACE: &str = "wasi_snapshot_preview1";
 use crate::modreg::ModuleRegistry;
 use std::sync::{Arc, RwLock};
 
-
 #[macro_use]
 extern crate log;
 
-mod modreg;
 mod callbacks;
+mod modreg;
 
 macro_rules! call {
     ($func:expr, $($p:expr),*) => {
@@ -50,7 +49,7 @@ impl WasmtimeEngineProvider {
         WasmtimeEngineProvider {
             inner: None,
             modbytes: buf.to_vec(),
-            wasidata: wasi
+            wasidata: wasi,
         }
     }
 }
@@ -70,7 +69,6 @@ impl WebAssemblyEngineProvider for WasmtimeEngineProvider {
     }
 
     fn call(&mut self, op_length: i32, msg_length: i32) -> Result<i32, Box<dyn Error>> {
-
         // Note that during this call, the guest should, through the functions
         // it imports from the host, set the guest error and response
 
@@ -89,8 +87,11 @@ impl WebAssemblyEngineProvider for WasmtimeEngineProvider {
             module.len()
         );
 
-        let new_instance = instance_from_buffer(module, &self.wasidata,
-                                                self.inner.as_ref().unwrap().host.clone())?;
+        let new_instance = instance_from_buffer(
+            module,
+            &self.wasidata,
+            self.inner.as_ref().unwrap().host.clone(),
+        )?;
         *self.inner.as_ref().unwrap().instance.write().unwrap() = new_instance;
 
         self.initialize()
@@ -101,25 +102,25 @@ impl WasmtimeEngineProvider {
     fn initialize(&self) -> Result<(), Box<dyn Error>> {
         for starter in wapc::WapcFunctions::REQUIRED_STARTS.iter() {
             if let Some(ext) = self
-                .inner.as_ref().unwrap()
+                .inner
+                .as_ref()
+                .unwrap()
                 .instance
-                .read().unwrap()
+                .read()
+                .unwrap()
                 .get_export(starter)
             {
-                ext.into_func()
-                    .unwrap()
-                    .call(&[])?;
+                ext.into_func().unwrap().call(&[])?;
             }
         }
         Ok(())
     }
 }
 
-
 fn instance_from_buffer(
     buf: &[u8],
     wasi: &Option<WasiParams>,
-    state: Arc<ModuleState>
+    state: Arc<ModuleState>,
 ) -> Result<Instance, Box<dyn Error>> {
     let engine = Engine::default();
     let store = Store::new(&engine);
@@ -132,8 +133,7 @@ fn instance_from_buffer(
     };
 
     // Make wasi available by default.
-    let preopen_dirs =
-        modreg::compute_preopen_dirs(&wasi.preopened_dirs, &wasi.map_dirs).unwrap();
+    let preopen_dirs = modreg::compute_preopen_dirs(&wasi.preopened_dirs, &wasi.map_dirs).unwrap();
     let argv = vec![]; // TODO: add support for argv (if applicable)
 
     let module_registry =
@@ -160,11 +160,9 @@ fn arrange_imports(
         .filter_map(|imp| {
             if let ExternType::Func(_) = imp.ty() {
                 match imp.module() {
-                    HOST_NAMESPACE => Some(callback_for_import(
-                        imp.name(),
-                        host.clone(),
-                        store.clone(),
-                    )),
+                    HOST_NAMESPACE => {
+                        Some(callback_for_import(imp.name(), host.clone(), store.clone()))
+                    }
                     WASI_UNSTABLE_NAMESPACE => {
                         let f = Extern::from(
                             mod_registry
@@ -198,13 +196,23 @@ fn callback_for_import(import: &str, host: Arc<ModuleState>, store: Store) -> Ex
     match import {
         WapcFunctions::HOST_CONSOLE_LOG => callbacks::console_log_func(&store, host.clone()).into(),
         WapcFunctions::HOST_CALL => callbacks::host_call_func(&store, host.clone()).into(),
-        WapcFunctions::GUEST_REQUEST_FN => callbacks::guest_request_func(&store, host.clone()).into(),
-        WapcFunctions::HOST_RESPONSE_FN => callbacks::host_response_func(&store, host.clone()).into(),
-        WapcFunctions::HOST_RESPONSE_LEN_FN => callbacks::host_response_len_func(&store, host.clone()).into(),
-        WapcFunctions::GUEST_RESPONSE_FN => callbacks::guest_response_func(&store, host.clone()).into(),
+        WapcFunctions::GUEST_REQUEST_FN => {
+            callbacks::guest_request_func(&store, host.clone()).into()
+        }
+        WapcFunctions::HOST_RESPONSE_FN => {
+            callbacks::host_response_func(&store, host.clone()).into()
+        }
+        WapcFunctions::HOST_RESPONSE_LEN_FN => {
+            callbacks::host_response_len_func(&store, host.clone()).into()
+        }
+        WapcFunctions::GUEST_RESPONSE_FN => {
+            callbacks::guest_response_func(&store, host.clone()).into()
+        }
         WapcFunctions::GUEST_ERROR_FN => callbacks::guest_error_func(&store, host.clone()).into(),
         WapcFunctions::HOST_ERROR_FN => callbacks::host_error_func(&store, host.clone()).into(),
-        WapcFunctions::HOST_ERROR_LEN_FN => callbacks::host_error_len_func(&store, host.clone()).into(),
+        WapcFunctions::HOST_ERROR_LEN_FN => {
+            callbacks::host_error_len_func(&store, host.clone()).into()
+        }
         _ => unreachable!(),
     }
 }
