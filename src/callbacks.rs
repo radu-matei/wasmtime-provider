@@ -1,8 +1,7 @@
+use std::sync::Arc;
 use wapc::ModuleState;
 use wasmtime::Memory;
 use wasmtime::{Caller, Func, FuncType, Store, Val, ValType};
-use std::sync::Arc;
-
 
 pub(crate) fn guest_request_func(store: &Store, host: Arc<ModuleState>) -> Func {
     let callback_type = FuncType::new(Box::new([ValType::I32, ValType::I32]), Box::new([]));
@@ -208,9 +207,8 @@ fn get_vec_from_memory(mem: Memory, ptr: i32, len: i32) -> Vec<u8> {
 }
 
 fn write_bytes_to_memory(memory: Memory, ptr: i32, slice: &[u8]) {
-    let data = unsafe { memory.data_unchecked_mut() };
-    // TODO: upgrade this to a faster memory write
-    for idx in 0..slice.len() {
-        data[idx + ptr as usize] = slice[idx];
+    unsafe {
+        let raw = memory.data_ptr().offset(ptr as isize);
+        raw.copy_from(slice.as_ptr(), slice.len())
     }
 }
